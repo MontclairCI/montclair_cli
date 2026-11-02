@@ -1,7 +1,5 @@
-use std::io;
-use tokio::io::AsyncReadExt;
+use std::io::Read;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 
 /// Centralized Stdin handle passed around the application
 pub struct StdinStream {
@@ -10,25 +8,21 @@ pub struct StdinStream {
 }
 
 impl StdinStream {
-    pub fn new(client_shutdown: CancellationToken) -> Self {
+    pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(32);
 
-        tokio::spawn(async move {
-            let mut stdin = tokio::io::stdin();
-            let mut buf = [0u8; 1024];
+        std::thread::spawn(move || {
+            let mut stdin = std::io::stdin().lock();
             loop {
-                tokio::select! {
-                    _ = client_shutdown.cancelled() => break,
-                    result = stdin.read(&mut buf) => {
-                        match result {
-                            Ok(n) => {
-                                if tx.send(buf[..n].to_vec()).await.is_err() {
-                                    break; // App exiting
-                                }
-                            }
-                            _ => break,
+                let mut buf = [0u8; 128];
+                let result = stdin.read(&mut buf);
+                match result {
+                    Ok(n) => {
+                        if tx.blocking_send(buf[..n].to_vec()).is_err() {
+                            break; // App exiting
                         }
                     }
+                    _ => break,
                 }
             }
         });
@@ -48,13 +42,13 @@ impl StdinStream {
         self.rx.recv().await
     }
 
-    pub async fn read_line(&mut self) -> io::Result<String> {
+    pub async fn read_line(&mut self) -> std::io::Result<String> {
         loop {
             // Check if we already have a full line in our remainder buffer
             if let Some(pos) = self.buffer.iter().position(|&b| b == b'\n') {
                 let line_bytes = self.buffer.drain(..=pos).collect::<Vec<u8>>();
                 let line_str = String::from_utf8(line_bytes)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 return Ok(line_str);
             }
 
@@ -62,7 +56,7 @@ impl StdinStream {
             match self.rx.recv().await {
                 Some(chunk) => self.buffer.extend_from_slice(&chunk),
                 None => {
-                    let e = io::Error::new(io::ErrorKind::UnexpectedEof, "EOF");
+                    let e = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "EOF");
                     return Err(e);
                 }
             }
