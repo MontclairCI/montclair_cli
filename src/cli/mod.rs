@@ -119,6 +119,7 @@ impl Cli {
                 }
             };
 
+            eprintln!("Main cli command exiting");
             client_shutdown.cancel();
 
             result

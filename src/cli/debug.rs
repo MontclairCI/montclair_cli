@@ -103,7 +103,7 @@ pub struct DebugInteractiveArgs {
         value_name = "JOB",
         help = "The name of the CI job to debug."
     )]
-    ci_job: String,
+    ci_job: Option<String>,
 
     #[arg(
         long = "git-branch",
@@ -263,32 +263,29 @@ pub async fn run_debug_interactive(
         server_hostname,
     } = args;
 
-    let job = {
-        let env = parse_env(ci_env)?;
+    let job_opt = ci_job
+        .map(|job_name| {
+            let env = parse_env(ci_env)?;
 
-        let collector = Collector::new(&env);
+            let collector = Collector::new(&env);
 
-        collector.evaluate(&ci_config_path).map_err(|e| {
-            TError::new(&format!(
-                "failed to evaluate {}:\n{}",
-                ci_config_path.display(),
-                e
-            ))
-        })?;
+            collector.evaluate(&ci_config_path).map_err(|e| {
+                TError::new(&format!(
+                    "failed to evaluate {}:\n{}",
+                    ci_config_path.display(),
+                    e
+                ))
+            })?;
 
-        collector
-            .jobs()
-            .into_iter()
-            .find(|j| j.name == ci_job)
-            .ok_or_else(|| TError::new(&format!("job not found: {ci_job}")))?
-    };
+            let job = collector
+                .jobs()
+                .into_iter()
+                .find(|j| j.name == job_name)
+                .ok_or_else(|| TError::new(&format!("job not found: {job_name}")))?;
 
-    println!("Found job: {}", job.name);
-    println!("Job steps:");
-
-    for step in &job.steps {
-        println!("  - {}", step.name);
-    }
+            Ok::<JobConfig, TError>(job)
+        })
+        .transpose()?;
 
     let secret = user_config.require_personal_access_token()?;
 
@@ -307,8 +304,12 @@ pub async fn run_debug_interactive(
 
     let capacity = 1;
 
-    let debug_session_id =
-        create_debug_session(&server_hostname, user_id, &secret, account_id, capacity).await?;
+    let debug_session_id = match debug_session_id_opt {
+        Some(id) => id,
+        None => {
+            create_debug_session(&server_hostname, user_id, &secret, account_id, capacity).await?
+        }
+    };
 
     let debug_client_config = get_debug_client_config(
         &server_hostname,
@@ -331,13 +332,22 @@ pub async fn run_debug_interactive(
     .await?;
 
     if debug_session_id_opt.is_none() {
-        debug_client
-            .prepare_sandbox(job.image.clone(), git_remote)
-            .await?;
+        match &job_opt {
+            Some(job) => {
+                debug_client
+                    .prepare_sandbox(job.image.clone(), git_remote)
+                    .await?;
+            }
+            None => {
+                return Err(TError::new(
+                    "One of `--job` or `--debug-session-id` must be provided.",
+                ));
+            }
+        }
     }
 
     debug_client
-        .start_interactive_session(signal_receiver_enabled, job)
+        .start_interactive_session(signal_receiver_enabled, job_opt)
         .await?;
 
     Ok(())
@@ -890,143 +900,155 @@ impl DebugClient {
     async fn start_interactive_session(
         &mut self,
         signal_receiver_enabled: Arc<AtomicBool>,
-        job: JobConfig,
+        job_opt: Option<JobConfig>,
     ) -> Result<(), TError> {
-        let mut stdin = StdinStream::new(self.client_shutdown.clone());
-        let mut current_step: usize = 0;
-        let mut step_success: Vec<Option<bool>> = vec![None; job.steps.len()];
+        let mut stdin = StdinStream::new();
 
-        loop {
-            // print current state
-            println!("Job: {}", job.name);
-            println!("Steps:");
-            for (i, step) in job.steps.iter().enumerate() {
-                let status = if let Some(success) = step_success[i] {
-                    if success { "✔" } else { "✘" }
-                } else {
-                    "?"
-                };
-                let cursor = if i == current_step { ">" } else { " " };
-                println!(
-                    "{} {} ({}) {}\n\t\"{}\"\n",
-                    cursor,
-                    status,
-                    i + 1,
-                    step.name,
-                    step.command
-                );
-            }
+        match job_opt {
+            Some(job) => {
+                let mut current_step: usize = 0;
+                let mut step_success: Vec<Option<bool>> = vec![None; job.steps.len()];
 
-            println!("You can open a (s)hell, (m)ove, (n)ext, (c)ontinue, or (q)uit.");
-
-            print!("> ");
-            use std::io::Write;
-            std::io::stdout().flush()?;
-
-            // read user input line
-            let line = stdin.read_line().await?;
-
-            // parse into command
-            let mut parts = line.split_whitespace();
-            let command = parts.next();
-            let command = match command {
-                Some(command) => match command {
-                    "s" | "shell" => DebugClientInteractiveCommand::Shell,
-                    "m" | "move" => {
-                        if let Some(i) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
-                            DebugClientInteractiveCommand::Move { step_idx: i - 1 }
+                loop {
+                    // print current state
+                    println!("Job: {}", job.name);
+                    println!("Steps:");
+                    for (i, step) in job.steps.iter().enumerate() {
+                        let status = if let Some(success) = step_success[i] {
+                            if success { "✔" } else { "✘" }
                         } else {
-                            DebugClientInteractiveCommand::Move {
+                            "?"
+                        };
+                        let cursor = if i == current_step { ">" } else { " " };
+                        println!(
+                            "{} {} ({}) {}\n\t\"{}\"\n",
+                            cursor,
+                            status,
+                            i + 1,
+                            step.name,
+                            step.command
+                        );
+                    }
+
+                    println!("You can open a (s)hell, (m)ove, (n)ext, (c)ontinue, or (q)uit.");
+
+                    print!("> ");
+                    use std::io::Write;
+                    std::io::stdout().flush()?;
+
+                    // read user input line
+                    let line = stdin.read_line().await?;
+
+                    // parse into command
+                    let mut parts = line.split_whitespace();
+                    let command = parts.next();
+                    let command = match command {
+                        Some(command) => match command {
+                            "s" | "shell" => DebugClientInteractiveCommand::Shell,
+                            "m" | "move" => {
+                                if let Some(i) = parts.next().and_then(|s| s.parse::<usize>().ok())
+                                {
+                                    DebugClientInteractiveCommand::Move { step_idx: i - 1 }
+                                } else {
+                                    DebugClientInteractiveCommand::Move {
+                                        step_idx: current_step,
+                                    }
+                                }
+                            }
+                            "c" | "continue" => {
+                                if let Some(i) = parts.next().and_then(|s| s.parse::<usize>().ok())
+                                {
+                                    DebugClientInteractiveCommand::ExecContinue { step_idx: i - 1 }
+                                } else {
+                                    DebugClientInteractiveCommand::ExecContinue {
+                                        step_idx: current_step,
+                                    }
+                                }
+                            }
+                            "n" | "next" => DebugClientInteractiveCommand::Exec {
                                 step_idx: current_step,
+                            },
+                            "q" | "quit" => DebugClientInteractiveCommand::Quit,
+                            _ => {
+                                println!("Unknown command: {}", line.trim());
+                                continue;
                             }
-                        }
-                    }
-                    "c" | "continue" => {
-                        if let Some(i) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
-                            DebugClientInteractiveCommand::ExecContinue { step_idx: i - 1 }
-                        } else {
-                            DebugClientInteractiveCommand::ExecContinue {
-                                step_idx: current_step,
-                            }
-                        }
-                    }
-                    "n" | "next" => DebugClientInteractiveCommand::Exec {
-                        step_idx: current_step,
-                    },
-                    "q" | "quit" => DebugClientInteractiveCommand::Quit,
-                    _ => {
-                        println!("Unknown command: {}", line.trim());
-                        continue;
-                    }
-                },
-                None => continue,
-            };
+                        },
+                        None => continue,
+                    };
 
-            // execute command
-            match command {
-                DebugClientInteractiveCommand::Quit => break,
-                DebugClientInteractiveCommand::Exec { step_idx } => {
-                    println!("Executing next.");
-                    // Execute the step pointed by current_step.
-                    let step = job.steps.get(step_idx).unwrap().clone();
-                    let exit_code = self
-                        .exec(signal_receiver_enabled.clone(), &step.command)
-                        .await?;
-                    if exit_code == 0 {
-                        step_success[step_idx] = Some(true);
-                        if step_idx + 1 < job.steps.len() {
-                            current_step = step_idx + 1;
-                        }
-                    } else {
-                        step_success[current_step] = Some(false);
-                        current_step = step_idx;
-                    }
-                }
-                DebugClientInteractiveCommand::ExecContinue { step_idx } => {
-                    println!("Executing continue on {}", step_idx);
-                    // Starting with step_idx, execute each step until the end or a failure.
-                    current_step = step_idx;
-                    loop {
-                        if current_step >= job.steps.len() {
-                            break;
-                        }
-
-                        let step = job.steps.get(current_step).unwrap().clone();
-                        let exit_code = self
-                            .exec(signal_receiver_enabled.clone(), &step.command)
-                            .await?;
-                        if exit_code == 0 {
-                            step_success[current_step] = Some(true);
-                            if current_step + 1 < job.steps.len() {
-                                current_step += 1;
-                            } else if current_step + 1 == job.steps.len() {
-                                break;
+                    // execute command
+                    match command {
+                        DebugClientInteractiveCommand::Quit => break,
+                        DebugClientInteractiveCommand::Exec { step_idx } => {
+                            println!("Executing next.");
+                            // Execute the step pointed by current_step.
+                            let step = job.steps.get(step_idx).unwrap().clone();
+                            let exit_code = self
+                                .exec(signal_receiver_enabled.clone(), &step.command)
+                                .await?;
+                            if exit_code == 0 {
+                                step_success[step_idx] = Some(true);
+                                if step_idx + 1 < job.steps.len() {
+                                    current_step = step_idx + 1;
+                                }
+                            } else {
+                                step_success[current_step] = Some(false);
+                                current_step = step_idx;
                             }
-                        } else {
-                            step_success[current_step] = Some(false);
-                            // If a failure occurs, do not advance the current_step.
-                            break;
+                        }
+                        DebugClientInteractiveCommand::ExecContinue { step_idx } => {
+                            println!("Executing continue on {}", step_idx);
+                            // Starting with step_idx, execute each step until the end or a failure.
+                            current_step = step_idx;
+                            loop {
+                                if current_step >= job.steps.len() {
+                                    break;
+                                }
+
+                                let step = job.steps.get(current_step).unwrap().clone();
+                                let exit_code = self
+                                    .exec(signal_receiver_enabled.clone(), &step.command)
+                                    .await?;
+                                if exit_code == 0 {
+                                    step_success[current_step] = Some(true);
+                                    if current_step + 1 < job.steps.len() {
+                                        current_step += 1;
+                                    } else if current_step + 1 == job.steps.len() {
+                                        break;
+                                    }
+                                } else {
+                                    step_success[current_step] = Some(false);
+                                    // If a failure occurs, do not advance the current_step.
+                                    break;
+                                }
+                            }
+                        }
+                        DebugClientInteractiveCommand::Shell => {
+                            // Open an interactive shell for the step pointed by step_idx.
+                            let _exit_code = self
+                                .shell(signal_receiver_enabled.clone(), &mut stdin)
+                                .await?;
+                        }
+                        DebugClientInteractiveCommand::Move { step_idx } => {
+                            println!("Executing move on {}", step_idx);
+                            // Move current_step to step_idx.
+                            if step_idx < job.steps.len() {
+                                current_step = step_idx;
+                            } else {
+                                println!("Step {} is out of bounds.", step_idx);
+                            }
                         }
                     }
-                }
-                DebugClientInteractiveCommand::Shell => {
-                    // Open an interactive shell for the step pointed by step_idx.
-                    let _exit_code = self
-                        .shell(signal_receiver_enabled.clone(), &mut stdin)
-                        .await?;
-                }
-                DebugClientInteractiveCommand::Move { step_idx } => {
-                    println!("Executing move on {}", step_idx);
-                    // Move current_step to step_idx.
-                    if step_idx < job.steps.len() {
-                        current_step = step_idx;
-                    } else {
-                        println!("Step {} is out of bounds.", step_idx);
-                    }
+
+                    // update state
                 }
             }
-
-            // update state
+            None => {
+                let _exit_code = self
+                    .shell(signal_receiver_enabled.clone(), &mut stdin)
+                    .await?;
+            }
         }
 
         Ok(())
