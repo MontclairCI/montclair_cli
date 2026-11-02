@@ -29,7 +29,7 @@ impl std::fmt::Display for ShowFormat {
 }
 
 #[derive(Args, Debug)]
-pub struct ShowSubcommand {
+pub struct ShowArgs {
     /// Path to the pipeline config file
     #[arg(long, value_name = "FILE", default_value = "muzan.py")]
     input: PathBuf,
@@ -42,22 +42,20 @@ pub struct ShowSubcommand {
     env: Vec<(String, String)>,
 }
 
-impl ShowSubcommand {
-    pub fn run(self) -> Result<(), TError> {
-        let ShowSubcommand { input, format, env } = self;
+pub fn run_show(args: ShowArgs) -> Result<(), TError> {
+    let ShowArgs { input, format, env } = args;
 
-        let env = parse_env(env)?;
+    let env = parse_env(env)?;
 
-        let config = Config::from_file(&input, &env)?;
+    let config = Config::from_file(&input, &env)?;
 
-        let output = match format {
-            ShowFormat::Ascii => config.to_ascii_graph(),
-            ShowFormat::Json => config.to_json()?,
-            ShowFormat::Dotgraph => config.to_dot_graph(),
-        };
+    let output = match format {
+        ShowFormat::Ascii => config.to_ascii_graph(),
+        ShowFormat::Json => config.to_json()?,
+        ShowFormat::Dotgraph => config.to_dot_graph(),
+    };
 
-        println!("{}", output);
+    println!("{}", output);
 
-        Ok(())
-    }
+    Ok(())
 }

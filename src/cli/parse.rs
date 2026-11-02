@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use muzanci_config::collector::Env;
+use muzanci_config::config::DebugSessionId;
 use muzanci_git::GitClient;
 use muzanci_observability::TError;
 
@@ -39,4 +40,8 @@ pub fn parse_env(env: Vec<(String, String)>) -> Result<Env, TError> {
     }
 
     Ok(env)
+}
+
+pub fn parse_debug_session_id(s: &str) -> Result<DebugSessionId, String> {
+    DebugSessionId::try_from(s).map_err(|e| e.to_string())
 }

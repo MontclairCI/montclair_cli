@@ -1,34 +1,47 @@
 use clap::Parser;
 use clap::Subcommand;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
+
 use muzanci_observability::TError;
 use muzanci_observability::TracingConfig;
-use std::path::PathBuf;
 
-use crate::cli::check_subcommand::CheckSubcommand;
-use crate::cli::debug_subcommand::DebugSubcommand;
-use crate::cli::show_subcommand::ShowSubcommand;
+use crate::cli::check::CheckArgs;
+use crate::cli::check::run_check;
+use crate::cli::debug::DebugInteractiveArgs;
+use crate::cli::debug::DebugSubcommand;
+use crate::cli::debug::run_debug_create;
+use crate::cli::debug::run_debug_exec;
+use crate::cli::debug::run_debug_exec_step;
+use crate::cli::debug::run_debug_interactive;
+use crate::cli::show::ShowArgs;
+use crate::cli::show::run_show;
 use crate::cli::user_config::UserConfig;
+use crate::signal_receiver::SignalReceiver;
 
-mod check_subcommand;
-mod debug_subcommand;
+mod check;
+mod debug;
 mod parse;
-mod show_subcommand;
+mod show;
 mod user_config;
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(
     name = "muzanci-cli",
     about = "CLI tool for debugging MuzanCI pipeline configurations and job execution"
 )]
-pub struct CliCommand {
+pub struct Cli {
     #[arg(long, value_name = "FILE", default_value = "muzan.toml", default_value_os_t = UserConfig::default_path(), global = true)]
     config: PathBuf,
 
     #[command(subcommand)]
-    subcommand: CliSubcommand,
+    command: CliCommand,
 }
 
-impl CliCommand {
+impl Cli {
     pub async fn run(self) -> Result<(), TError> {
         let user_config = self.user_config()?;
 
@@ -39,11 +52,87 @@ impl CliCommand {
             muzanci_observability::init_tracing(TracingConfig::default())?;
         }
 
-        match self.subcommand {
-            CliSubcommand::Show(subcommand) => subcommand.run(),
-            CliSubcommand::Check(subcommand) => subcommand.run(),
-            CliSubcommand::Debug(subcommand) => subcommand.run(user_config).await,
+        let mut join_set = JoinSet::new();
+        let signal_receiver_enabled = Arc::new(AtomicBool::new(false));
+        let client_shutdown = CancellationToken::new();
+        SignalReceiver::spawn(
+            &mut join_set,
+            client_shutdown.clone(),
+            signal_receiver_enabled.clone(),
+        );
+
+        join_set.spawn(async move {
+            let result = match self.command {
+                CliCommand::Show { args } => run_show(args),
+                CliCommand::Check { args } => run_check(args),
+                CliCommand::Debug {
+                    subcommand: Some(DebugSubcommand::Create { args }),
+                    ..
+                } => run_debug_create(args, user_config, client_shutdown.clone()).await,
+                CliCommand::Debug {
+                    subcommand: Some(DebugSubcommand::Exec { args }),
+                    ..
+                } => {
+                    run_debug_exec(
+                        args,
+                        user_config,
+                        client_shutdown.clone(),
+                        signal_receiver_enabled,
+                    )
+                    .await
+                }
+                CliCommand::Debug {
+                    subcommand: Some(DebugSubcommand::ExecStep { args }),
+                    ..
+                } => {
+                    run_debug_exec_step(
+                        args,
+                        user_config,
+                        client_shutdown.clone(),
+                        signal_receiver_enabled,
+                    )
+                    .await
+                }
+                CliCommand::Debug {
+                    subcommand: Some(DebugSubcommand::Interactive { args }),
+                    ..
+                } => {
+                    run_debug_interactive(
+                        args,
+                        user_config,
+                        client_shutdown.clone(),
+                        signal_receiver_enabled,
+                    )
+                    .await
+                }
+                CliCommand::Debug {
+                    subcommand: None,
+                    args,
+                } => {
+                    run_debug_interactive(
+                        args,
+                        user_config,
+                        client_shutdown.clone(),
+                        signal_receiver_enabled,
+                    )
+                    .await
+                }
+            };
+
+            client_shutdown.cancel();
+
+            result
+        });
+
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => eprintln!("error: {e}"),
+                Err(e) => eprintln!("join error: {e}"),
+            }
         }
+
+        Ok(())
     }
 
     fn user_config(&self) -> Result<UserConfig, TError> {
@@ -69,20 +158,32 @@ impl CliCommand {
     }
 }
 
-#[derive(Subcommand, Debug)]
-enum CliSubcommand {
+#[derive(Subcommand)]
+enum CliCommand {
     #[command(
         name = "show",
         about = "Prints the dependency graph in the specified format"
     )]
-    Show(ShowSubcommand),
+    Show {
+        #[command(flatten)]
+        args: ShowArgs,
+    },
 
     #[command(
         name = "check",
         about = "Checks for syntax errors and cyclical dependencies"
     )]
-    Check(CheckSubcommand),
+    Check {
+        #[command(flatten)]
+        args: CheckArgs,
+    },
 
-    #[command(name = "debug", about = "Start a debug session")]
-    Debug(DebugSubcommand),
+    #[command(name = "debug", about = "Start an interactive debug session")]
+    Debug {
+        #[command(flatten)]
+        args: DebugInteractiveArgs,
+
+        #[command(subcommand)]
+        subcommand: Option<DebugSubcommand>,
+    },
 }

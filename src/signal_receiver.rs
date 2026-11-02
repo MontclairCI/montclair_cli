@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use tokio::signal::unix::SignalKind;
@@ -21,24 +22,24 @@ pub enum SignalReceiverError {
 }
 
 pub struct SignalReceiver {
-    debug_session_shutdown: CancellationToken,
+    client_shutdown: CancellationToken,
     enabled: Arc<AtomicBool>,
 }
 
 impl SignalReceiver {
     pub fn spawn(
-        debug_session_shutdown: CancellationToken,
+        join_set: &mut JoinSet<Result<(), TError>>,
+        client_shutdown: CancellationToken,
         enabled: Arc<AtomicBool>,
     ) -> AbortHandle {
-        tokio::spawn(async move {
+        join_set.spawn(async move {
             SignalReceiver {
-                debug_session_shutdown,
+                client_shutdown,
                 enabled,
             }
             .main()
             .await
         })
-        .abort_handle()
     }
 
     #[tracing::instrument(
@@ -52,7 +53,7 @@ impl SignalReceiver {
     async fn main(mut self) -> Result<(), TError> {
         tracing::info!("signal_receiver.started");
 
-        let debug_session_shutdown = self.debug_session_shutdown.clone();
+        let debug_session_shutdown = self.client_shutdown.clone();
 
         tokio::select! {
             _ = debug_session_shutdown.cancelled() => {
@@ -70,7 +71,7 @@ impl SignalReceiver {
 
     #[tracing::instrument(skip_all)]
     async fn run(&mut self) -> Result<(), TError> {
-        let debug_session_shutdown = self.debug_session_shutdown.clone();
+        let debug_session_shutdown = self.client_shutdown.clone();
 
         let mut sigint = match signal(SignalKind::interrupt()) {
             Ok(s) => s,

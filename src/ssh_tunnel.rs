@@ -1,3 +1,4 @@
+use muzanci_transport::message::UserId;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use uuid::Uuid;
@@ -14,85 +15,103 @@ use muzanci_transport::message::Message;
 use muzanci_transport::mux::MuxHandle;
 
 use crate::ssh_client_handler::ClientHandler;
-use crate::ssh_client_handler::run_exec_shell;
-use crate::ssh_client_handler::run_interactive_shell;
+use crate::ssh_client_handler::run_ssh_exec;
+use crate::ssh_client_handler::run_ssh_shell;
 use crate::stdin::StdinStream;
 
-#[tracing::instrument(
-    skip_all,
-    name = "debug_client_tunnel_interactive",
-    fields(
-        id = Uuid::now_v7().to_string().to_string(),
-        user_id = user_id.to_string(),
-        account_id = account_id.to_string(),
-        debug_session_id = debug_session_id.to_string(),
-    )
-)]
-pub async fn tunnel_interactive(
+pub struct DebugClientSshTunnel {
     signal_receiver_enabled: Arc<AtomicBool>,
-    stdin: &mut StdinStream,
-    mux_handle: MuxHandle,
-    user_id: Uuid,
+    user_id: UserId,
     account_id: AccountId,
     debug_session_id: DebugSessionId,
-) -> Result<(), TError> {
-    let mut session_handle = init_session_handle(mux_handle, debug_session_id).await?;
-
-    match run_interactive_shell(signal_receiver_enabled, stdin, &mut session_handle).await {
-        Ok(exit_code) => {
-            tracing::info!("Shell exited with code: {}", exit_code);
-        }
-        Err(e) => {
-            return Err(TError::new(&format!("Shell error: {}", e)));
-        }
-    }
-
-    session_handle
-        .disconnect(russh::Disconnect::ByApplication, "Session ended", "en")
-        .await?;
-
-    Ok(())
+    session_handle: russh::client::Handle<ClientHandler>,
 }
 
-#[tracing::instrument(
-    skip_all,
-    name = "debug_client_tunnel_interactive",
-    fields(
-        id = Uuid::now_v7().to_string().to_string(),
-        user_id = user_id.to_string(),
-        account_id = account_id.to_string(),
-        debug_session_id = debug_session_id.to_string(),
-    )
-)]
-pub async fn tunnel_exec(
-    signal_receiver_enabled: Arc<AtomicBool>,
-    cmd: &str,
-    mux_handle: MuxHandle,
-    user_id: Uuid,
-    account_id: AccountId,
-    debug_session_id: DebugSessionId,
-) -> Result<u32, TError> {
-    let mut session_handle = init_session_handle(mux_handle, debug_session_id).await?;
+impl DebugClientSshTunnel {
+    pub async fn connect(
+        signal_receiver_enabled: Arc<AtomicBool>,
+        mux_handle: MuxHandle,
+        user_id: UserId,
+        account_id: AccountId,
+        debug_session_id: DebugSessionId,
+    ) -> Result<Self, TError> {
+        let session_handle = init_tunnel_ssh_session(mux_handle, debug_session_id).await?;
 
-    let exit_code = match run_exec_shell(signal_receiver_enabled, cmd, &mut session_handle).await {
-        Ok(exit_code) => {
-            tracing::info!("Shell exited with code: {}", exit_code);
-            exit_code
-        }
-        Err(e) => {
-            return Err(TError::new(&format!("Shell error: {}", e)));
-        }
-    };
+        Ok(Self {
+            signal_receiver_enabled,
+            user_id,
+            account_id,
+            debug_session_id,
+            session_handle,
+        })
+    }
 
-    session_handle
-        .disconnect(russh::Disconnect::ByApplication, "Session ended", "en")
-        .await?;
+    #[tracing::instrument(
+        skip_all,
+        name = "debug_client_tunnel_shell",
+        fields(
+            id = Uuid::now_v7().to_string().to_string(),
+            user_id = self.user_id.to_string(),
+            account_id = self.account_id.to_string(),
+            debug_session_id = self.debug_session_id.to_string(),
+        )
+    )]
+    pub async fn shell(mut self, stdin: &mut StdinStream) -> Result<u32, TError> {
+        let exit_code = match run_ssh_shell(
+            self.signal_receiver_enabled,
+            stdin,
+            &mut self.session_handle,
+        )
+        .await
+        {
+            Ok(exit_code) => {
+                tracing::info!("Shell exited with code: {}", exit_code);
+                exit_code
+            }
+            Err(e) => {
+                return Err(TError::new(&format!("Shell error: {}", e)));
+            }
+        };
 
-    Ok(exit_code)
+        self.session_handle
+            .disconnect(russh::Disconnect::ByApplication, "Session ended", "en")
+            .await?;
+
+        Ok(exit_code)
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        name = "debug_client_tunnel_exec",
+        fields(
+            id = Uuid::now_v7().to_string().to_string(),
+            user_id = self.user_id.to_string(),
+            account_id = self.account_id.to_string(),
+            debug_session_id = self.debug_session_id.to_string(),
+        )
+    )]
+    pub async fn exec(mut self, cmd: &str) -> Result<u32, TError> {
+        let exit_code =
+            match run_ssh_exec(self.signal_receiver_enabled, cmd, &mut self.session_handle).await {
+                Ok(exit_code) => {
+                    tracing::info!("Shell exited with code: {}", exit_code);
+                    exit_code
+                }
+                Err(e) => {
+                    return Err(TError::new(&format!("Shell error: {}", e)));
+                }
+            };
+
+        self.session_handle
+            .disconnect(russh::Disconnect::ByApplication, "Session ended", "en")
+            .await?;
+
+        Ok(exit_code)
+    }
 }
 
 #[tracing::instrument(skip_all)]
-async fn init_session_handle(
+async fn init_tunnel_ssh_session(
     mux_handle: MuxHandle,
     debug_session_id: DebugSessionId,
 ) -> Result<russh::client::Handle<ClientHandler>, TError> {

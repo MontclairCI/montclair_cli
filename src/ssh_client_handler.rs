@@ -20,7 +20,7 @@ impl russh::client::Handler for ClientHandler {
     }
 }
 
-pub async fn run_exec_shell(
+pub async fn run_ssh_exec(
     signal_receiver_enabled: Arc<AtomicBool>,
     cmd: &str,
     session: &mut Handle<ClientHandler>,
@@ -43,13 +43,11 @@ pub async fn run_exec_shell(
             msg_opt = channel.wait() => {
                 match msg_opt {
                     Some(russh::ChannelMsg::Data { ref data }) => {
-                        tracing::warn!("[debug_client < debugger . stdout_process] n={}", data.len());
                         let mut out = std::io::stdout();
                         out.write_all(data)?;
                         out.flush()?;
                     }
                     Some(russh::ChannelMsg::ExtendedData { ref data, .. }) => {
-                        tracing::warn!("[debug_client < debugger . stderr_process] n={}", data.len());
                         let mut out = std::io::stderr();
                         out.write_all(data)?;
                         out.flush()?;
@@ -71,7 +69,7 @@ pub async fn run_exec_shell(
     Ok(exit_code)
 }
 
-pub async fn run_interactive_shell(
+pub async fn run_ssh_shell(
     signal_receiver_enabled: Arc<AtomicBool>,
     stdin: &mut StdinStream,
     session: &mut Handle<ClientHandler>,
