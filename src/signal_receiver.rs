@@ -10,7 +10,7 @@ use tokio::task::AbortHandle;
 
 use tokio_util::sync::CancellationToken;
 
-use muzanci_observability::TError;
+use montclair_observability::TError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SignalReceiverError {

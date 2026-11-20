@@ -1,18 +1,18 @@
-use muzanci_transport::message::UserId;
+use montclair_protocol::message::UserId;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use uuid::Uuid;
 
-use muzanci_config::config::DebugSessionId;
-use muzanci_observability::TError;
-use muzanci_transport::channel::ChannelReceiver;
-use muzanci_transport::channel::ChannelSender;
-use muzanci_transport::channel::ChannelType;
-use muzanci_transport::channel::combine_into_byte_stream;
-use muzanci_transport::message::AccountId;
-use muzanci_transport::message::DebugClientTunnelMessage;
-use muzanci_transport::message::Message;
-use muzanci_transport::mux::MuxHandle;
+use montclair_plan::config::DebugSessionId;
+use montclair_observability::TError;
+use montclair_protocol::channel::ChannelReceiver;
+use montclair_protocol::channel::ChannelSender;
+use montclair_protocol::channel::ChannelType;
+use montclair_protocol::channel::combine_into_byte_stream;
+use montclair_protocol::message::AccountId;
+use montclair_protocol::message::DebugClientTunnelMessage;
+use montclair_protocol::message::Message;
+use montclair_protocol::mux::MuxHandle;
 
 use crate::ssh_client_handler::ClientHandler;
 use crate::ssh_client_handler::run_ssh_exec;
@@ -172,7 +172,7 @@ async fn authenticate_ssh_session(
     session_handle: &mut russh::client::Handle<ClientHandler>,
 ) -> Result<(), TError> {
     let auth_result = session_handle
-        .authenticate_none("muzanci-debug-client-tunnel")
+        .authenticate_none("montclair-debug-client-tunnel")
         .await?;
 
     if !auth_result.success() {

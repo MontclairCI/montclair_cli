@@ -6,8 +6,8 @@ use std::sync::atomic::AtomicBool;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use muzanci_observability::TError;
-use muzanci_observability::TracingConfig;
+use montclair_observability::TError;
+use montclair_observability::TracingConfig;
 
 use crate::cli::check::CheckArgs;
 use crate::cli::check::run_check;
@@ -30,11 +30,11 @@ mod user_config;
 
 #[derive(Parser)]
 #[command(
-    name = "muzanci-cli",
+    name = "montclair-cli",
     about = "CLI tool for debugging MuzanCI pipeline configurations and job execution"
 )]
 pub struct Cli {
-    #[arg(long, value_name = "FILE", default_value = "muzan.toml", default_value_os_t = UserConfig::default_path(), global = true)]
+    #[arg(long, value_name = "FILE", default_value = "montclair.toml", default_value_os_t = UserConfig::default_path(), global = true)]
     config: PathBuf,
 
     #[command(subcommand)]
@@ -49,7 +49,7 @@ impl Cli {
             || std::env::var("DO_NOT_TRACK").is_ok_and(|v| v == "1");
 
         if !disable_telemetry {
-            muzanci_observability::init_tracing(TracingConfig::default())?;
+            montclair_observability::init_tracing(TracingConfig::default()).await?;
         }
 
         let mut join_set = JoinSet::new();

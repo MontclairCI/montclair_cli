@@ -3,20 +3,20 @@ use clap::Subcommand;
 use http::Request;
 use http::StatusCode;
 use http_body_util::BodyExt;
-use muzanci_config::config::DebugClientConfig;
-use muzanci_config::config::DebugSessionId;
-use muzanci_config::config::ImageConfig;
-use muzanci_config::config::ServerId;
-use muzanci_transport::channel::ChannelReceiver;
-use muzanci_transport::channel::ChannelSender;
-use muzanci_transport::channel::ChannelType;
-use muzanci_transport::http::CliCreateDebugSessionRequest;
-use muzanci_transport::http::CliCreateDebugSessionResponse;
-use muzanci_transport::http::CliGetDebugClientConfigResponse;
-use muzanci_transport::http::CliGetUserResponse;
-use muzanci_transport::message::DebugClientMessage;
-use muzanci_transport::message::Message;
-use muzanci_transport::message::UserId;
+use montclair_plan::config::DebugClientConfig;
+use montclair_plan::config::DebugSessionId;
+use montclair_plan::config::ImageConfig;
+use montclair_plan::config::ServerId;
+use montclair_protocol::channel::ChannelReceiver;
+use montclair_protocol::channel::ChannelSender;
+use montclair_protocol::channel::ChannelType;
+use montclair_protocol::http::CliCreateDebugSessionRequest;
+use montclair_protocol::http::CliCreateDebugSessionResponse;
+use montclair_protocol::http::CliGetDebugClientConfigResponse;
+use montclair_protocol::http::CliGetUserResponse;
+use montclair_protocol::message::DebugClientMessage;
+use montclair_protocol::message::Message;
+use montclair_protocol::message::UserId;
 use sha2::Sha256;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,17 +25,17 @@ use tokio::io::BufReader;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use muzanci_config::collector::Collector;
-use muzanci_config::config::JobConfig;
-use muzanci_git::GitClient;
-use muzanci_git::GitRemote;
-use muzanci_observability::TError;
-use muzanci_transport::channel::FnChannelAcceptor;
-use muzanci_transport::http::DebugClientResponse;
-use muzanci_transport::http::MUZANCI_TRANSPORT_V1;
-use muzanci_transport::message::AccountId;
-use muzanci_transport::mux::Mux;
-use muzanci_transport::mux::MuxHandle;
+use montclair_plan::collector::Collector;
+use montclair_plan::config::JobConfig;
+use montclair_git::GitClient;
+use montclair_git::GitRemote;
+use montclair_observability::TError;
+use montclair_protocol::channel::FnChannelAcceptor;
+use montclair_protocol::http::DebugClientResponse;
+use montclair_protocol::http::montclair_protocol_V1;
+use montclair_protocol::message::AccountId;
+use montclair_protocol::mux::Mux;
+use montclair_protocol::mux::MuxHandle;
 
 use crate::cli::parse::parse_debug_session_id;
 use crate::cli::parse::parse_env;
@@ -83,7 +83,7 @@ pub struct DebugInteractiveArgs {
     #[arg(
         long = "input",
         value_name = "FILE",
-        default_value = "muzan.py",
+        default_value = "montclair.py",
         help = "The path to the input CI config file."
     )]
     ci_config_path: PathBuf,
@@ -135,7 +135,7 @@ pub struct DebugCreateArgs {
     #[arg(
         long = "input",
         value_name = "FILE",
-        default_value = "muzan.py",
+        default_value = "montclair.py",
         help = "The path to the input CI config file."
     )]
     ci_config_path: PathBuf,
@@ -213,7 +213,7 @@ pub struct DebugExecStepArgs {
     #[arg(
         long = "input",
         value_name = "FILE",
-        default_value = "muzan.py",
+        default_value = "montclair.py",
         help = "The path to the input CI config file."
     )]
     ci_config_path: PathBuf,
@@ -569,7 +569,7 @@ async fn fetch_user_id(server_hostname: &str, secret: &str) -> Result<Option<Use
 
     let response = reqwest::Client::new()
         .get(url)
-        .header("x-muzanci-personal-access-token-secret", secret)
+        .header("x-montclair-personal-access-token-secret", secret)
         .header("accept", "application/json")
         .send()
         .await?;
@@ -601,9 +601,9 @@ async fn create_debug_session(
 
     let response = reqwest::Client::new()
         .post(url)
-        .header("x-muzanci-user-id", user_id.to_string())
-        .header("x-muzanci-personal-access-token-secret", secret)
-        .header("x-muzanci-account-id", account_id.to_string())
+        .header("x-montclair-user-id", user_id.to_string())
+        .header("x-montclair-personal-access-token-secret", secret)
+        .header("x-montclair-account-id", account_id.to_string())
         .header("accept", "application/json")
         .json(&CliCreateDebugSessionRequest { capacity })
         .send()
@@ -637,9 +637,9 @@ async fn get_debug_client_config(
 
     let response = reqwest::Client::new()
         .get(url)
-        .header("x-muzanci-user-id", user_id.to_string())
-        .header("x-muzanci-personal-access-token-secret", secret)
-        .header("x-muzanci-account-id", account_id.to_string())
+        .header("x-montclair-user-id", user_id.to_string())
+        .header("x-montclair-personal-access-token-secret", secret)
+        .header("x-montclair-account-id", account_id.to_string())
         .header("accept", "application/json")
         .send()
         .await?;
@@ -1186,9 +1186,9 @@ impl DebugClient {
 //         server_hostname,
 //         "/begin_debug_resolver",
 //         &[
-//             ("x-muzanci-user-id", &user_id.to_string()),
-//             ("x-muzanci-personal-access-token-secret", secret),
-//             ("x-muzanci-account-id", &account_id.to_string()),
+//             ("x-montclair-user-id", &user_id.to_string()),
+//             ("x-montclair-personal-access-token-secret", secret),
+//             ("x-montclair-account-id", &account_id.to_string()),
 //         ],
 //     )
 //     .await?;
@@ -1225,12 +1225,12 @@ impl DebugClient {
 //         "/begin_debug_client",
 //         &[
 //             (
-//                 "x-muzanci-server-id",
+//                 "x-montclair-server-id",
 //                 &debug_client_config.server_id.to_string(),
 //             ),
-//             ("x-muzanci-user-id", &user_id.to_string()),
-//             ("x-muzanci-personal-access-token-secret", secret),
-//             ("x-muzanci-account-id", &account_id.to_string()),
+//             ("x-montclair-user-id", &user_id.to_string()),
+//             ("x-montclair-personal-access-token-secret", secret),
+//             ("x-montclair-account-id", &account_id.to_string()),
 //         ],
 //     )
 //     .await?;
@@ -1289,11 +1289,11 @@ async fn debug_client_mux_handle(
         .uri("/cli_connect_debug_client")
         .header(http::header::HOST, server_hostname)
         .header(http::header::CONNECTION, "Upgrade")
-        .header(http::header::UPGRADE, MUZANCI_TRANSPORT_V1)
-        .header("x-muzanci-server-id", &server_id.to_string())
-        .header("x-muzanci-user-id", &user_id.to_string())
-        .header("x-muzanci-personal-access-token-secret", secret)
-        .header("x-muzanci-account-id", &account_id.to_string())
+        .header(http::header::UPGRADE, montclair_protocol_V1)
+        .header("x-montclair-server-id", &server_id.to_string())
+        .header("x-montclair-user-id", &user_id.to_string())
+        .header("x-montclair-personal-access-token-secret", secret)
+        .header("x-montclair-account-id", &account_id.to_string())
         .body(http_body_util::Empty::<bytes::Bytes>::new())?;
 
     eprintln!("built request");

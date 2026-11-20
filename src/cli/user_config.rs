@@ -1,5 +1,5 @@
 use directories::ProjectDirs;
-use muzanci_transport::http::CliListAccountsResponse;
+use montclair_protocol::http::CliListAccountsResponse;
 use serde::Deserialize;
 use serde::Serialize;
 use std::io::Read;
@@ -7,8 +7,8 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
-use muzanci_observability::TError;
-use muzanci_transport::message::AccountId;
+use montclair_observability::TError;
+use montclair_protocol::message::AccountId;
 
 pub struct UserConfig {
     path: PathBuf,
@@ -24,16 +24,8 @@ pub struct UserConfigFields {
 
 impl UserConfig {
     pub fn from_file(path: &Path) -> Result<Self, TError> {
-        let fields = {
-            let mut file = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .truncate(false)
-                .open(path)?;
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)?;
-            toml::from_str(&contents)?
-        };
+        let s = std::fs::read_to_string(path)?;
+        let fields = toml::from_str(&s)?;
 
         let config = Self {
             path: path.to_path_buf(),
@@ -58,10 +50,10 @@ impl UserConfig {
     }
 
     pub fn default_path() -> PathBuf {
-        if let Some(proj_dirs) = ProjectDirs::from("com", "muzanci", "muzan-cli") {
-            // Linux/FreeBSD: ~/.config/muzan-cli/config.toml
-            // macOS:         ~/Library/Application Support/com.muzanci.muzan-cli/config.toml
-            // Windows:       %USERPROFILE%\AppData\Roaming\muzanci\muzan-cli\config\config.toml
+        if let Some(proj_dirs) = ProjectDirs::from("com", "montclairci", "montclair_cli") {
+            // Linux/FreeBSD: ~/.config/montclair_cli/config.toml
+            // macOS:         ~/Library/Application Support/com.montclairci.montclair_cli/config.toml
+            // Windows:       %USERPROFILE%\AppData\Roaming\montclairci\montclair_cli\config\config.toml
             proj_dirs.config_dir().join("config.toml")
         } else {
             // Fallback to current directory if home directory cannot be resolved
@@ -137,7 +129,7 @@ impl UserConfig {
 
         let response = reqwest::Client::new()
             .get(url)
-            .header("x-muzanci-personal-access-token-secret", secret)
+            .header("x-montclair-personal-access-token-secret", secret)
             .header("accept", "application/json")
             .send()
             .await?;

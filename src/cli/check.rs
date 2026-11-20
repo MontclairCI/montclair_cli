@@ -1,6 +1,6 @@
 use clap::Args;
-use muzanci_config::config::Config;
-use muzanci_observability::TError;
+use montclair_observability::TError;
+use montclair_plan::config::Config;
 use std::path::PathBuf;
 
 use crate::cli::parse::parse_env;
@@ -9,7 +9,7 @@ use crate::cli::parse::parse_key_val;
 #[derive(Args, Debug)]
 pub struct CheckArgs {
     /// Path to the pipeline config file
-    #[arg(long, value_name = "FILE", default_value = "muzan.py")]
+    #[arg(long, value_name = "FILE", default_value = "montclair.py")]
     input: PathBuf,
 
     #[arg(long, value_parser = parse_key_val, action = clap::ArgAction::Append)]

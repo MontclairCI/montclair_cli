@@ -1,7 +1,7 @@
 use clap::Args;
 use clap::ValueEnum;
-use muzanci_config::config::Config;
-use muzanci_observability::TError;
+use montclair_observability::TError;
+use montclair_plan::config::Config;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -31,7 +31,7 @@ impl std::fmt::Display for ShowFormat {
 #[derive(Args, Debug)]
 pub struct ShowArgs {
     /// Path to the pipeline config file
-    #[arg(long, value_name = "FILE", default_value = "muzan.py")]
+    #[arg(long, value_name = "FILE", default_value = "montclair.py")]
     input: PathBuf,
 
     /// Format to print the dependency graph in
